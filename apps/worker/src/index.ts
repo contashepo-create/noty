@@ -8,6 +8,14 @@ type ChatMessage = {
   recipient: string;
   content: string;
   createdAt: number;
+  attachments: ChatAttachment[];
+};
+type ChatAttachment = { id: string; filename: string; contentType: string; size: number };
+type ChatMessageRow = Omit<ChatMessage, "attachments"> & {
+  attachmentId: string | null;
+  attachmentFilename: string | null;
+  attachmentContentType: string | null;
+  attachmentSize: number | null;
 };
 
 type Bindings = {
@@ -19,6 +27,23 @@ type Bindings = {
 
 const encoder = new TextEncoder();
 const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
+const MAX_ATTACHMENT_COUNT = 5;
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const ATTACHMENT_TYPES: Record<string, string> = {
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  pdf: "application/pdf",
+  png: "image/png",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  txt: "text/plain",
+  webp: "image/webp",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
@@ -193,29 +218,117 @@ app.get("/messages/:username", async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `SELECT id, sender_username AS sender, recipient_username AS recipient, content, created_at AS createdAt
+    `SELECT messages.id, messages.sender_username AS sender, messages.recipient_username AS recipient,
+            messages.content, messages.created_at AS createdAt,
+            message_attachments.id AS attachmentId, message_attachments.filename AS attachmentFilename,
+            message_attachments.content_type AS attachmentContentType, message_attachments.size AS attachmentSize
      FROM messages
+     LEFT JOIN message_attachments ON message_attachments.message_id = messages.id
      WHERE (sender_username = ? AND recipient_username = ?)
         OR (sender_username = ? AND recipient_username = ?)
-     ORDER BY created_at ASC
+     ORDER BY messages.created_at ASC, message_attachments.filename ASC
      LIMIT 500`,
-  ).bind(username, recipient, recipient, username).all<ChatMessage>();
-  return c.json({ messages: result.results });
+  ).bind(username, recipient, recipient, username).all<ChatMessageRow>();
+  const messages = new Map<string, ChatMessage>();
+  for (const row of result.results) {
+    let message = messages.get(row.id);
+    if (!message) {
+      message = {
+        id: row.id,
+        sender: row.sender,
+        recipient: row.recipient,
+        content: row.content,
+        createdAt: row.createdAt,
+        attachments: [],
+      };
+      messages.set(row.id, message);
+    }
+    if (row.attachmentId && row.attachmentFilename && row.attachmentContentType && row.attachmentSize !== null) {
+      message.attachments.push({
+        id: row.attachmentId,
+        filename: row.attachmentFilename,
+        contentType: row.attachmentContentType,
+        size: row.attachmentSize,
+      });
+    }
+  }
+  return c.json({ messages: Array.from(messages.values()) });
+});
+
+app.get("/messages/:messageId/attachments/:attachmentId", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+  const attachment = await c.env.DB.prepare(
+    `SELECT message_attachments.object_key AS objectKey, message_attachments.filename AS filename,
+            message_attachments.content_type AS contentType
+     FROM message_attachments
+     JOIN messages ON messages.id = message_attachments.message_id
+     WHERE message_attachments.id = ? AND messages.id = ?
+       AND (messages.sender_username = ? OR messages.recipient_username = ?)`,
+  ).bind(c.req.param("attachmentId"), c.req.param("messageId"), username, username)
+    .first<{ objectKey: string; filename: string; contentType: string }>();
+  if (!attachment) return c.json({ error: "المرفق غير متاح" }, 404);
+  const object = await c.env.BUCKET.get(attachment.objectKey);
+  if (!object) return c.json({ error: "الملف غير موجود في التخزين" }, 404);
+  const isImage = attachment.contentType.startsWith("image/");
+  const safeFilename = encodeURIComponent(attachment.filename).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": attachment.contentType,
+      "Content-Disposition": `${isImage ? "inline" : "attachment"}; filename="attachment"; filename*=UTF-8''${safeFilename}`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });
 
 app.post("/messages", async (c) => {
   if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
   const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
   if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
-  const body: unknown = await c.req.json().catch(() => null);
-  if (!body || typeof body !== "object" || !("recipient" in body) || !("content" in body)) {
-    return c.json({ error: "المستلم ونص الرسالة مطلوبان" }, 400);
+  const isMultipart = c.req.header("Content-Type")?.includes("multipart/form-data") ?? false;
+  let recipient: unknown;
+  let content: unknown;
+  let files: File[] = [];
+  if (isMultipart) {
+    const form = await c.req.formData().catch(() => null);
+    if (!form) return c.json({ error: "تعذر قراءة الملفات المرفقة" }, 400);
+    recipient = form.get("recipient");
+    content = form.get("content") ?? "";
+    files = form.getAll("files").filter((value): value is File => value instanceof File);
+  } else {
+    const body: unknown = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object" || !("recipient" in body) || !("content" in body)) {
+      return c.json({ error: "المستلم ونص الرسالة مطلوبان" }, 400);
+    }
+    ({ recipient, content } = body as { recipient: unknown; content: unknown });
   }
-  const { recipient, content } = body as { recipient: unknown; content: unknown };
-  if (typeof recipient !== "string" || typeof content !== "string" || !content.trim()) {
-    return c.json({ error: "المستلم ونص الرسالة مطلوبان" }, 400);
+  if (typeof recipient !== "string" || typeof content !== "string" || (!content.trim() && files.length === 0)) {
+    return c.json({ error: "أضف نصًا أو ملفًا إلى الرسالة" }, 400);
   }
   if (content.length > 4000) return c.json({ error: "الحد الأقصى للرسالة 4000 حرف" }, 400);
+  if (files.length > MAX_ATTACHMENT_COUNT) return c.json({ error: "الحد الأقصى 5 ملفات لكل رسالة" }, 400);
+  const preparedFiles: { file: File; id: string; key: string; filename: string; contentType: string }[] = [];
+  for (const file of files) {
+    if (file.size === 0 || file.size > MAX_ATTACHMENT_SIZE) {
+      return c.json({ error: "يجب أن يكون حجم كل ملف أقل من 10 ميغابايت" }, 400);
+    }
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const contentType = ATTACHMENT_TYPES[extension];
+    if (!contentType) {
+      return c.json({ error: "نوع الملف غير مدعوم. أرسل صورة أو PDF أو مستندًا شائعًا." }, 415);
+    }
+    const id = crypto.randomUUID();
+    preparedFiles.push({
+      file,
+      id,
+      key: `messages/${id}`,
+      filename: file.name.replace(/[\r\n]/g, "_").slice(0, 255) || `file.${extension}`,
+      contentType,
+    });
+  }
   const users = configuredUsers(c.env.SUPERNOTI_USERS || "[]");
   if (!users) return c.json({ error: "إعدادات المستخدمين غير صالحة على الخادم" }, 500);
   if (!users.some((user) => user.username === username) || !users.some((user) => user.username === recipient) || username === recipient) {
@@ -228,10 +341,33 @@ app.post("/messages", async (c) => {
     recipient,
     content: content.trim(),
     createdAt: Date.now(),
+    attachments: preparedFiles.map(({ id, filename, contentType, file }) => ({
+      id,
+      filename,
+      contentType,
+      size: file.size,
+    })),
   };
-  await c.env.DB.prepare(
-    "INSERT INTO messages (id, sender_username, recipient_username, content, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).bind(message.id, message.sender, message.recipient, message.content, message.createdAt).run();
+  const storedKeys: string[] = [];
+  try {
+    for (const attachment of preparedFiles) {
+      await c.env.BUCKET.put(attachment.key, attachment.file.stream(), {
+        httpMetadata: { contentType: attachment.contentType },
+      });
+      storedKeys.push(attachment.key);
+    }
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        "INSERT INTO messages (id, sender_username, recipient_username, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      ).bind(message.id, message.sender, message.recipient, message.content, message.createdAt),
+      ...preparedFiles.map((attachment) => c.env.DB.prepare(
+        "INSERT INTO message_attachments (id, message_id, object_key, filename, content_type, size) VALUES (?, ?, ?, ?, ?, ?)",
+      ).bind(attachment.id, message.id, attachment.key, attachment.filename, attachment.contentType, attachment.file.size)),
+    ]);
+  } catch (error) {
+    await Promise.all(storedKeys.map((key) => c.env.BUCKET.delete(key)));
+    throw error;
+  }
   return c.json({ message }, 201);
 });
 

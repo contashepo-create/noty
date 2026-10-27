@@ -52,3 +52,15 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_conversation
   ON messages (sender_username, recipient_username, created_at);
+
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS message_attachments_message
+  ON message_attachments (message_id);

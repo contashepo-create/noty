@@ -12,6 +12,17 @@
 7. From `apps/worker`, add Worker secrets with `pnpm exec wrangler secret put SUPERNOTI_USERS` and `pnpm exec wrangler secret put SESSION_SECRET`, then deploy with `pnpm exec wrangler deploy`.
 8. Set the GitHub Actions repository variable `VITE_API_BASE_URL` to the deployed Worker URL and push to `main`.
 
+## Chat Attachments
+
+Chat attachments are stored in the `supernoti-attachments` R2 bucket. Before deploying a Worker version that supports chat attachments, apply the schema from `apps/worker`:
+
+```bash
+pnpm exec wrangler d1 execute supernoti-db --remote --file=./schema.sql
+pnpm exec wrangler deploy
+```
+
+Each message can include up to five files, with a 10 MB limit per file. Supported formats include JPEG, PNG, GIF, WebP, PDF, TXT, DOC/DOCX, XLS/XLSX, and PPT/PPTX. Attachments are served only to participants in the conversation.
+
 ## GitHub Secrets
 
 Add these secrets to your GitHub repo:

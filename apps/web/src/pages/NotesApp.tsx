@@ -9,18 +9,26 @@ type Message = {
   recipient: string;
   content: string;
   createdAt: number;
+  attachments?: MessageAttachment[];
 };
+type MessageAttachment = { id: string; filename: string; contentType: string; size: number };
 type Session = { token: string; user: User };
 
 const SESSION_KEY = "supernoti-session";
 const notesKey = (username: string) => `supernoti-notes:${username}`;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
+function sessionHeaders(token: string): Headers {
+  const headers = new Headers();
+  headers.set("Authorization", ["Bearer", token].join(" "));
+  return headers;
+}
+
 async function api<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
@@ -47,6 +55,86 @@ function Brand({ compact = false }: { compact?: boolean }) {
     <div className={`brand ${compact ? "brand-compact" : ""}`}>
       <span className="brand-mark" aria-hidden="true">ن</span>
       <span>نوتي<span className="brand-period">.</span></span>
+    </div>
+  );
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${size} بايت`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} كيلوبايت`;
+  return `${(size / (1024 * 1024)).toFixed(1)} ميغابايت`;
+}
+
+function PendingAttachment({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    if (!file.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  return (
+    <div className="pending-attachment">
+      {previewUrl ? <img src={previewUrl} alt="" /> : <span aria-hidden="true">▤</span>}
+      <span className="pending-file-copy"><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></span>
+      <button type="button" onClick={onRemove} aria-label={`إزالة ${file.name}`}>×</button>
+    </div>
+  );
+}
+
+function MessageAttachmentView({ messageId, attachment, token }: {
+  messageId: string;
+  attachment: MessageAttachment;
+  token: string;
+}) {
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [error, setError] = useState("");
+  const isImage = attachment.contentType.startsWith("image/");
+
+  const openAttachment = async () => {
+    setError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachment.id)}`,
+        { headers: sessionHeaders(token) },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "تعذر تحميل الملف");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      if (isImage) {
+        setPreviewUrl((previous) => {
+          if (previous) URL.revokeObjectURL(previous);
+          return url;
+        });
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = attachment.filename;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذر تحميل الملف");
+    }
+  };
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  return (
+    <div className={`message-attachment ${isImage ? "image-attachment" : ""}`}>
+      {previewUrl && isImage ? <img className="attachment-preview" src={previewUrl} alt={attachment.filename} /> : null}
+      <button type="button" className="attachment-file" onClick={() => void openAttachment()}>
+        <span className="attachment-icon" aria-hidden="true">{isImage ? "▧" : "↧"}</span>
+        <span className="attachment-copy"><strong>{attachment.filename}</strong><small>{formatFileSize(attachment.size)} · {isImage ? "صورة" : "ملف"}</small></span>
+        <span className="attachment-action">{isImage ? (previewUrl ? "فتح" : "عرض") : "تنزيل"}</span>
+      </button>
+      {error && <span className="attachment-error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -141,6 +229,8 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
   const [activeContact, setActiveContact] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [draftMessage, setDraftMessage] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [chatError, setChatError] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -269,12 +359,18 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     const content = draftMessage.trim();
-    if (!content || !activeContact || sending) return;
+    if ((!content && selectedFiles.length === 0) || !activeContact || sending) return;
     setSending(true);
     setChatError("");
     try {
-      await api("/messages", session.token, { method: "POST", body: JSON.stringify({ recipient: activeContact, content }) });
+      const form = new FormData();
+      form.append("recipient", activeContact);
+      form.append("content", content);
+      selectedFiles.forEach((file) => form.append("files", file));
+      await api("/messages", session.token, { method: "POST", body: form });
       setDraftMessage("");
+      setSelectedFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       await loadMessages();
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "تعذر إرسال الرسالة");
@@ -351,22 +447,38 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
         ) : (
           <section className="messages-page">
             <div className="page-heading messages-heading"><div><span className="eyebrow muted-eyebrow">ابقَ على تواصل</span><h1>رسائلك<span className="heading-count">{contacts.length}</span></h1><p>محادثاتك الخاصة، في مكان واحد.</p></div><span className="secure-chat-badge">◆ محادثة خاصة</span></div>
-            <div className="chat-card">
+            <div className={`chat-card ${activeContact ? "chat-selected" : ""}`}>
               <aside className="contacts-panel"><div className="contacts-title"><strong>المحادثات</strong><span>{contacts.length}</span></div>
-                {contacts.map((contact, index) => <button key={contact} className={`contact-item ${activeContact === contact ? "contact-active" : ""}`} onClick={() => setActiveContact(contact)}><span className={`contact-avatar contact-color-${index % 3}`}>{contact.slice(0, 1).toUpperCase()}<i /></span><span className="contact-details"><strong>{contact}</strong><small>محادثة خاصة</small></span><span className="contact-chevron">‹</span></button>)}
+                {contacts.map((contact, index) => <button key={contact} className={`contact-item ${activeContact === contact ? "contact-active" : ""}`} onClick={() => { setActiveContact(contact); setMessages([]); setSelectedFiles([]); setChatError(""); }}><span className={`contact-avatar contact-color-${index % 3}`}>{contact.slice(0, 1).toUpperCase()}<i /></span><span className="contact-details"><strong>{contact}</strong><small>محادثة خاصة</small></span><span className="contact-chevron">‹</span></button>)}
                 {!contacts.length && <div className="no-contacts">{chatError || "لا توجد حسابات أخرى مفعّلة بعد."}</div>}
               </aside>
               <div className="conversation">
                 {activeContact ? <>
-                  <div className="conversation-header"><span className="contact-avatar contact-color-0">{activeContact.slice(0, 1).toUpperCase()}</span><div><strong>{activeContact}</strong><small><i /> محادثة خاصة</small></div><span className="conversation-secure">◆</span></div>
+                  <div className="conversation-header"><button type="button" className="chat-back-button" onClick={() => { setActiveContact(""); setSelectedFiles([]); }} aria-label="العودة إلى المحادثات">›</button><span className="contact-avatar contact-color-0">{activeContact.slice(0, 1).toUpperCase()}</span><div><strong>{activeContact}</strong><small><i /> محادثة خاصة</small></div><span className="conversation-secure">◆</span></div>
                   <div className="message-history">
                     <div className="day-divider"><span>بداية المحادثة</span></div>
                     {chatLoading && messages.length === 0 && <div className="chat-loading"><span className="spinner" /> جارٍ تحميل المحادثة...</div>}
                     {!chatLoading && messages.length === 0 && <div className="chat-empty"><span>✉</span><strong>ابدأ محادثة لطيفة</strong><p>أرسل أول رسالة إلى {activeContact}.</p></div>}
-                    {messages.map((message) => <div key={message.id} className={`message-row ${message.sender === session.user.username ? "message-mine" : ""}`}><div className="message-bubble"><p>{message.content}</p><time>{new Date(message.createdAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}</time></div></div>)}
+                    {messages.map((message) => <div key={message.id} className={`message-row ${message.sender === session.user.username ? "message-mine" : ""}`}><div className="message-bubble">{message.content && <p>{message.content}</p>}{message.attachments?.map((attachment) => <MessageAttachmentView key={attachment.id} messageId={message.id} attachment={attachment} token={session.token} />)}<time>{new Date(message.createdAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}</time></div></div>)}
                     {chatError && <div className="chat-error" role="alert">{chatError} <button onClick={() => void loadMessages()}>إعادة المحاولة</button></div>}
                   </div>
-                  <form className="message-composer" onSubmit={sendMessage}><textarea value={draftMessage} onChange={(e) => setDraftMessage(e.target.value)} placeholder="اكتب رسالتك..." rows={1} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} /><div className="composer-bottom"><span>Enter للإرسال · Shift + Enter لسطر جديد</span><button className="send-button" type="submit" disabled={!draftMessage.trim() || sending} aria-label="إرسال الرسالة">{sending ? "…" : "↑"}</button></div></form>
+                  <form className="message-composer" onSubmit={sendMessage}>
+                    {selectedFiles.length > 0 && <div className="pending-attachments">{selectedFiles.map((file, index) => <PendingAttachment key={`${file.name}-${file.lastModified}-${index}`} file={file} onRemove={() => setSelectedFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))} />)}</div>}
+                    <div className="composer-input-row">
+                      <input ref={fileInputRef} className="attachment-input" type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={(event) => {
+                        const incoming = Array.from(event.currentTarget.files ?? []);
+                        const available = Math.max(0, 5 - selectedFiles.length);
+                        if (incoming.length > available) setChatError("يمكن إرفاق 5 ملفات كحد أقصى في الرسالة.");
+                        else setChatError("");
+                        setSelectedFiles((current) => [...current, ...incoming.slice(0, available)]);
+                        event.currentTarget.value = "";
+                      }} />
+                      <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} aria-label="إرفاق صورة أو ملف" title="إرفاق صورة أو ملف">＋</button>
+                      <textarea value={draftMessage} onChange={(e) => setDraftMessage(e.target.value)} placeholder="اكتب رسالتك..." rows={1} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+                      <button className="send-button" type="submit" disabled={(!draftMessage.trim() && selectedFiles.length === 0) || sending} aria-label="إرسال الرسالة">{sending ? "…" : "↑"}</button>
+                    </div>
+                    <div className="composer-bottom"><span>صور وملفات حتى 10 MB · بحد أقصى 5 ملفات</span><span className="composer-hint">Enter للإرسال</span></div>
+                  </form>
                 </> : <div className="chat-empty no-active-chat"><span>◌</span><strong>مساحة للتواصل</strong><p>اختر محادثة من القائمة لبدء المراسلة.</p></div>}
               </div>
             </div>
