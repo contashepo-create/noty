@@ -1,0 +1,19 @@
+﻿{
+  "name": "supernoti",
+  "private": true,
+  "version": "0.0.1",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:desktop": "pnpm --filter supernoti-desktop dev",
+    "dev:web": "pnpm --filter supernoti-web dev",
+    "dev:worker": "pnpm --filter supernoti-worker dev",
+    "build": "turbo run build",
+    "build:desktop": "pnpm --filter supernoti-desktop build",
+    "build:web": "pnpm --filter supernoti-web build"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}

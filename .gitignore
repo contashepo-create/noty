@@ -1,0 +1,11 @@
+﻿node_modules
+dist
+out
+build
+.DS_Store
+*.log
+.env
+.dev.vars
+.wrangler
+.vite
+.turbo
