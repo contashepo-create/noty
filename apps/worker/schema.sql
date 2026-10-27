@@ -28,3 +28,27 @@ CREATE TABLE IF NOT EXISTS attachments (
   url TEXT,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_notes (
+  id TEXT NOT NULL,
+  owner_username TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (id, owner_username)
+);
+
+CREATE INDEX IF NOT EXISTS user_notes_owner_updated
+  ON user_notes (owner_username, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  sender_username TEXT NOT NULL,
+  recipient_username TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS messages_conversation
+  ON messages (sender_username, recipient_username, created_at);

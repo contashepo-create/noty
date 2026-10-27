@@ -1,7 +1,7 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type User = { id: string; username: string };
-type Note = { id: string; title: string; content: string; updatedAt: number };
+type Note = { id: string; title: string; content: string; createdAt: number; updatedAt: number };
 type Message = {
   id: string;
   sender: string;
@@ -13,9 +13,10 @@ type Session = { token: string; user: User };
 
 const SESSION_KEY = "supernoti-session";
 const notesKey = (username: string) => `supernoti-notes:${username}`;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
 async function api<T>(path: string, token?: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -128,6 +129,10 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
 
 function Workspace({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const [notes, setNotes] = useState<Note[]>(() => readNotes(session.user.username));
+  const [notesLoaded, setNotesLoaded] = useState(false);
+  const [noteSyncStatus, setNoteSyncStatus] = useState("جاري تحميل ملاحظاتك...");
+  const noteSyncTimers = useRef(new Map<string, number>());
+  const notesSyncError = useRef<(error: unknown) => void>(() => {});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [section, setSection] = useState<"notes" | "messages">("notes");
   const [search, setSearch] = useState("");
@@ -143,8 +148,57 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
   const filteredNotes = useMemo(() => notes.filter((note) => `${note.title} ${note.content}`.toLowerCase().includes(search.toLowerCase())), [notes, search]);
 
   useEffect(() => {
+    let active = true;
+    const cachedNotes = readNotes(session.user.username);
+    api<{ notes: Note[] }>("/notes", session.token).then(async ({ notes: cloudNotes }) => {
+      let nextNotes = cloudNotes;
+      if (cloudNotes.length === 0 && cachedNotes.length > 0) {
+        await Promise.all(cachedNotes.map((note) => api("/notes", session.token, {
+          method: "POST",
+          body: JSON.stringify(note),
+        })));
+        nextNotes = cachedNotes;
+      }
+      if (!active) return;
+      setNotes(nextNotes);
+      setNotesLoaded(true);
+      setNoteSyncStatus("متزامنة مع Cloudflare");
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setNotes(cachedNotes);
+      setNotesLoaded(true);
+      setNoteSyncStatus(error instanceof Error ? error.message : "تعذرت مزامنة الملاحظات");
+    });
+    return () => { active = false; };
+  }, [session.token, session.user.username]);
+
+  useEffect(() => {
     localStorage.setItem(notesKey(session.user.username), JSON.stringify(notes));
   }, [notes, session.user.username]);
+
+  useEffect(() => {
+    notesSyncError.current = (error) => {
+      setNoteSyncStatus(error instanceof Error ? error.message : "تعذر حفظ الملاحظة على Cloudflare");
+    };
+  }, []);
+
+  useEffect(() => () => {
+    for (const timer of noteSyncTimers.current.values()) window.clearTimeout(timer);
+  }, []);
+
+  const scheduleNoteSave = (note: Note) => {
+    const previousTimer = noteSyncTimers.current.get(note.id);
+    if (previousTimer) window.clearTimeout(previousTimer);
+    setNoteSyncStatus("جارٍ الحفظ على Cloudflare...");
+    const timer = window.setTimeout(() => {
+      noteSyncTimers.current.delete(note.id);
+      void api("/notes", session.token, {
+        method: "POST",
+        body: JSON.stringify(note),
+      }).then(() => setNoteSyncStatus("متزامنة مع Cloudflare")).catch(notesSyncError.current);
+    }, 450);
+    noteSyncTimers.current.set(note.id, timer);
+  };
 
   useEffect(() => {
     let active = true;
@@ -181,20 +235,34 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
   }, [loadMessages, section, activeContact]);
 
   const createNote = () => {
-    const note: Note = { id: crypto.randomUUID(), title: "", content: "", updatedAt: Date.now() };
+    const now = Date.now();
+    const note: Note = { id: crypto.randomUUID(), title: "", content: "", createdAt: now, updatedAt: now };
     setNotes((current) => [note, ...current]);
     setSelectedId(note.id);
     setSection("notes");
+    if (notesLoaded) scheduleNoteSave(note);
   };
 
   const updateNote = (field: "title" | "content", value: string) => {
-    setNotes((current) => current.map((note) => note.id === selectedId ? { ...note, [field]: value, updatedAt: Date.now() } : note));
+    if (!selectedNote) return;
+    const updatedNote = { ...selectedNote, [field]: value, updatedAt: Date.now() };
+    setNotes((current) => current.map((note) => note.id === selectedId ? updatedNote : note));
+    if (notesLoaded) scheduleNoteSave(updatedNote);
   };
 
   const deleteSelectedNote = () => {
     if (!selectedNote) return;
+    const pendingTimer = noteSyncTimers.current.get(selectedNote.id);
+    if (pendingTimer) window.clearTimeout(pendingTimer);
+    noteSyncTimers.current.delete(selectedNote.id);
     setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
     setSelectedId(null);
+    if (notesLoaded) {
+      setNoteSyncStatus("جارٍ حذف الملاحظة...");
+      void api(`/notes/${encodeURIComponent(selectedNote.id)}`, session.token, { method: "DELETE" })
+        .then(() => setNoteSyncStatus("متزامنة مع Cloudflare"))
+        .catch(notesSyncError.current);
+    }
   };
 
   const sendMessage = async (event: FormEvent) => {
@@ -237,7 +305,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
           {notes.length === 0 && <p className="empty-sidebar">ملاحظاتك الجديدة ستظهر هنا</p>}
         </div>
         <div className="sidebar-bottom">
-          <div className="sync-status"><span className="status-dot" /><span>ملاحظاتك محفوظة محليًا</span><span className="sync-cloud">☁</span></div>
+          <div className="sync-status"><span className="status-dot" /><span>{noteSyncStatus}</span><span className="sync-cloud">☁</span></div>
           <button className="profile-button" onClick={onLogout}><span className="profile-avatar">{initials}</span><span className="profile-copy"><strong>{session.user.username}</strong><small>حسابك الشخصي</small></span><span className="profile-exit">↗</span></button>
         </div>
       </aside>

@@ -6,27 +6,13 @@
     {
       "binding": "DB",
       "database_name": "supernoti-db",
-      "database_id": "PLACEHOLDER_REPLACE_WITH_ACTUAL_ID"
+      "database_id": "9de22686-6551-43ab-a56c-77565b3e2afa"
     }
   ],
   "r2_buckets": [
     {
       "binding": "BUCKET",
       "bucket_name": "supernoti-attachments"
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "SYNC_ROOM",
-        "class_name": "SyncRoom"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_classes": ["SyncRoom"]
     }
   ],
   "vars": {

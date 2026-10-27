@@ -6,15 +6,19 @@
 2. Login: `wrangler login`
 3. Create D1 database: `wrangler d1 create supernoti-db`
 4. Create R2 bucket: `wrangler r2 bucket create supernoti-attachments`
-5. Update wrangler.jsonc with the D1 database ID
-6. Run migrations: `wrangler d1 execute supernoti-db --file=./apps/worker/schema.sql`
+5. Set the D1 database ID in `apps/worker/wrangler.jsonc`
+6. Apply the database schema:
+   `pnpm --filter supernoti-worker exec wrangler d1 execute supernoti-db --remote --file=./schema.sql`
+7. From `apps/worker`, add Worker secrets with `pnpm exec wrangler secret put SUPERNOTI_USERS` and `pnpm exec wrangler secret put SESSION_SECRET`, then deploy with `pnpm exec wrangler deploy`.
+8. Set the GitHub Actions repository variable `VITE_API_BASE_URL` to the deployed Worker URL and push to `main`.
 
 ## GitHub Secrets
 
 Add these secrets to your GitHub repo:
-- `SUPERNOTI_USERS` - JSON: `[{"username":"user1","password":"pass1"},{"username":"user2","password":"pass2"}]`
 - `CLOUDFLARE_API_TOKEN` - For deployment
 - `CLOUDFLARE_ACCOUNT_ID`
+
+`SUPERNOTI_USERS` and `SESSION_SECRET` are Worker secrets, not GitHub Actions secrets.
 
 ## GitHub Pages
 

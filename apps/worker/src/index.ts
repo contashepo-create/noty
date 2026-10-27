@@ -13,7 +13,6 @@ type ChatMessage = {
 type Bindings = {
   DB: D1Database;
   BUCKET: R2Bucket;
-  SYNC_ROOM: DurableObjectNamespace;
   SUPERNOTI_USERS: string;
   SESSION_SECRET: string;
 };
@@ -82,32 +81,6 @@ async function authenticatedUsername(request: Request, secret: string): Promise<
   return match ? verifyToken(match[1], secret) : null;
 }
 
-export class SyncRoom {
-  constructor(private readonly state: DurableObjectState) {}
-
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname !== "/messages") return new Response("Not found", { status: 404 });
-
-    if (request.method === "GET") {
-      const messages = await this.state.storage.get<ChatMessage[]>("messages") ?? [];
-      return Response.json({ messages });
-    }
-
-    if (request.method === "POST") {
-      const message = await request.json<ChatMessage>();
-      await this.state.storage.transaction(async (transaction) => {
-        const messages = await transaction.get<ChatMessage[]>("messages") ?? [];
-        messages.push(message);
-        await transaction.put("messages", messages);
-      });
-      return Response.json({ success: true });
-    }
-
-    return new Response("Method not allowed", { status: 405 });
-  }
-}
-
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("/*", cors({
@@ -149,6 +122,65 @@ app.get("/users", async (c) => {
   return c.json({ users: users.filter((user) => user.username !== username).map((user) => user.username) });
 });
 
+app.get("/notes", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+
+  const result = await c.env.DB.prepare(
+    "SELECT id, title, content, created_at AS createdAt, updated_at AS updatedAt FROM user_notes WHERE owner_username = ? ORDER BY updated_at DESC",
+  ).bind(username).all<{
+    id: string;
+    title: string;
+    content: string;
+    createdAt: number;
+    updatedAt: number;
+  }>();
+  return c.json({ notes: result.results });
+});
+
+app.post("/notes", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+
+  const body: unknown = await c.req.json().catch(() => null);
+  if (!body || typeof body !== "object" || !("id" in body) || !("title" in body) ||
+      !("content" in body) || !("updatedAt" in body)) {
+    return c.json({ error: "بيانات الملاحظة غير مكتملة" }, 400);
+  }
+  const note = body as { id: unknown; title: unknown; content: unknown; createdAt?: unknown; updatedAt: unknown };
+  if (typeof note.id !== "string" || !note.id || note.id.length > 128 ||
+      typeof note.title !== "string" || note.title.length > 500 ||
+      typeof note.content !== "string" || note.content.length > 100_000 ||
+      typeof note.updatedAt !== "number" || !Number.isSafeInteger(note.updatedAt) ||
+      (note.createdAt !== undefined && (typeof note.createdAt !== "number" || !Number.isSafeInteger(note.createdAt)))) {
+    return c.json({ error: "بيانات الملاحظة غير صالحة" }, 400);
+  }
+
+  const createdAt = typeof note.createdAt === "number" ? note.createdAt : note.updatedAt;
+  await c.env.DB.prepare(
+    `INSERT INTO user_notes (id, owner_username, title, content, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id, owner_username) DO UPDATE SET
+       title = excluded.title,
+       content = excluded.content,
+       updated_at = excluded.updated_at
+     WHERE excluded.updated_at >= user_notes.updated_at`,
+  ).bind(note.id, username, note.title, note.content, createdAt, note.updatedAt).run();
+  return c.json({ success: true });
+});
+
+app.delete("/notes/:id", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+  await c.env.DB.prepare("DELETE FROM user_notes WHERE id = ? AND owner_username = ?")
+    .bind(c.req.param("id"), username)
+    .run();
+  return c.json({ success: true });
+});
+
 app.get("/messages/:username", async (c) => {
   if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
   const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
@@ -160,14 +192,15 @@ app.get("/messages/:username", async (c) => {
     return c.json({ error: "المستخدم غير متاح" }, 404);
   }
 
-  const roomName = `messages:${[username, recipient].sort().map(encodeURIComponent).join(":")}`;
-  const roomId = c.env.SYNC_ROOM.idFromName(roomName);
-  const room = c.env.SYNC_ROOM.get(roomId);
-  const response = await room.fetch(new Request("https://room/messages", { method: "GET" }));
-  const result = await response.json<{ messages: ChatMessage[] }>();
-  return c.json({ messages: result.messages.filter((message) =>
-    (message.sender === username && message.recipient === recipient) ||
-    (message.sender === recipient && message.recipient === username)) });
+  const result = await c.env.DB.prepare(
+    `SELECT id, sender_username AS sender, recipient_username AS recipient, content, created_at AS createdAt
+     FROM messages
+     WHERE (sender_username = ? AND recipient_username = ?)
+        OR (sender_username = ? AND recipient_username = ?)
+     ORDER BY created_at ASC
+     LIMIT 500`,
+  ).bind(username, recipient, recipient, username).all<ChatMessage>();
+  return c.json({ messages: result.results });
 });
 
 app.post("/messages", async (c) => {
@@ -196,13 +229,9 @@ app.post("/messages", async (c) => {
     content: content.trim(),
     createdAt: Date.now(),
   };
-  const roomName = `messages:${[username, recipient].sort().map(encodeURIComponent).join(":")}`;
-  const room = c.env.SYNC_ROOM.get(c.env.SYNC_ROOM.idFromName(roomName));
-  await room.fetch(new Request("https://room/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(message),
-  }));
+  await c.env.DB.prepare(
+    "INSERT INTO messages (id, sender_username, recipient_username, content, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).bind(message.id, message.sender, message.recipient, message.content, message.createdAt).run();
   return c.json({ message }, 201);
 });
 
