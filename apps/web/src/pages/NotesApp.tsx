@@ -155,6 +155,8 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
         method: "POST",
         body: JSON.stringify({ username: username.trim(), password }),
       });
+      setUsername("");
+      setPassword("");
       onLogin(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر تسجيل الدخول");
@@ -173,7 +175,7 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
           <div className="story-copy">
             <span className="eyebrow"><span className="eyebrow-dot" /> مساحتك، بطريقتك</span>
             <h1>أفكارك تستحق<br /><span>مكانًا أجمل.</span></h1>
-            <p>ملاحظاتك ورسائلك المهمة، مرتبة في مساحة واحدة هادئة وآمنة.</p>
+            <p>ملاحظاتك ومتابعاتك المهمة، مرتبة في مساحة واحدة هادئة وآمنة.</p>
             <div className="story-preview">
               <div className="preview-top">
                 <span className="preview-avatar">س</span>
@@ -192,16 +194,16 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
           <span className="login-icon">✦</span>
           <h2>مرحبًا بعودتك</h2>
           <p className="login-subtitle">سجّل الدخول إلى مساحتك الشخصية</p>
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} autoComplete="off">
             <label htmlFor="username">اسم المستخدم</label>
             <div className="field-wrap">
               <span className="field-icon" aria-hidden="true">♙</span>
-              <input id="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="أدخل اسم المستخدم" required />
+              <input id="username" autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="أدخل اسم المستخدم" required />
             </div>
             <div className="password-label"><label htmlFor="password">كلمة المرور</label><span>محميّة بالتشفير</span></div>
             <div className="field-wrap">
               <span className="field-icon" aria-hidden="true">⌑</span>
-              <input id="password" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="أدخل كلمة المرور" required />
+              <input id="password" type={showPassword ? "text" : "password"} autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="أدخل كلمة المرور" required />
               <button className="reveal-button" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}>{showPassword ? "إخفاء" : "عرض"}</button>
             </div>
             {error && <div className="form-error" role="alert">{error}</div>}
@@ -313,7 +315,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
       setMessages(result.messages);
       setChatError("");
     } catch (error) {
-      setChatError(error instanceof Error ? error.message : "تعذر تحميل الرسائل");
+      setChatError(error instanceof Error ? error.message : "تعذر تحميل المحادثة");
     }
   }, [activeContact, session.token]);
 
@@ -389,7 +391,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
         <div className="nav-caption">مساحتك</div>
         <nav className="main-nav" aria-label="التنقل الرئيسي">
           <button className={section === "notes" ? "nav-item active" : "nav-item"} onClick={() => setSection("notes")}><span className="nav-icon">▤</span><span>كل الملاحظات</span><span className="nav-count">{notes.length}</span></button>
-          <button className={section === "messages" ? "nav-item active" : "nav-item"} onClick={() => setSection("messages")}><span className="nav-icon">◌</span><span>الرسائل</span><span className="nav-count">{contacts.length}</span></button>
+          <button className={section === "messages" ? "nav-item active" : "nav-item"} onClick={() => setSection("messages")}><span className="nav-icon">◌</span><span>الدعم</span><span className="nav-count">{contacts.length}</span></button>
         </nav>
         <div className="sidebar-divider" />
         <div className="nav-caption list-caption">ملاحظاتك <button onClick={createNote} aria-label="إضافة ملاحظة">＋</button></div>
@@ -409,7 +411,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
 
       <main className="main-panel">
         <header className="topbar">
-          <div className="breadcrumb"><span>مساحتي</span><span className="crumb-slash">/</span><strong>{section === "notes" ? "كل الملاحظات" : "الرسائل"}</strong></div>
+          <div className="breadcrumb"><span>مساحتي</span><span className="crumb-slash">/</span><strong>{section === "notes" ? "كل الملاحظات" : "الدعم"}</strong></div>
           <div className="topbar-actions"><label className="search-box"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث في مساحتك..." /><kbd>⌘ K</kbd></label><button className="logout-button" onClick={onLogout}><span aria-hidden="true">↗</span> تسجيل الخروج</button><span className="topbar-avatar">{initials}</span></div>
         </header>
 
@@ -446,7 +448,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
           </div>
         ) : (
           <section className="messages-page">
-            <div className="page-heading messages-heading"><div><span className="eyebrow muted-eyebrow">ابقَ على تواصل</span><h1>رسائلك<span className="heading-count">{contacts.length}</span></h1><p>محادثاتك الخاصة، في مكان واحد.</p></div><span className="secure-chat-badge">◆ محادثة خاصة</span></div>
+            <div className="page-heading messages-heading"><div><span className="eyebrow muted-eyebrow">مركز المساعدة</span><h1>الدعم<span className="heading-count">{contacts.length}</span></h1><p>مساحتك الخاصة للتواصل مع فريقك.</p></div><span className="secure-chat-badge">◆ مساحة خاصة</span></div>
             <div className={`chat-card ${activeContact ? "chat-selected" : ""}`}>
               <aside className="contacts-panel"><div className="contacts-title"><strong>المحادثات</strong><span>{contacts.length}</span></div>
                 {contacts.map((contact, index) => <button key={contact} className={`contact-item ${activeContact === contact ? "contact-active" : ""}`} onClick={() => { setActiveContact(contact); setMessages([]); setSelectedFiles([]); setChatError(""); }}><span className={`contact-avatar contact-color-${index % 3}`}>{contact.slice(0, 1).toUpperCase()}<i /></span><span className="contact-details"><strong>{contact}</strong><small>محادثة خاصة</small></span><span className="contact-chevron">‹</span></button>)}
@@ -491,24 +493,26 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
 
 export default function NotesApp() {
   const navigate = useNavigate();
-  const [session, setSession] = useState<Session | null>(() => {
+  const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(SESSION_KEY);
-      return saved ? (JSON.parse(saved) as Session) : null;
-    } catch (error) {
-      console.error("Could not restore the saved session", error);
       localStorage.removeItem(SESSION_KEY);
-      return null;
+    } catch (error) {
+      console.error("Could not clear a previously saved session", error);
     }
-  });
+  }, []);
 
   const login = (nextSession: Session) => {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
     setSession(nextSession);
   };
 
   const logout = () => {
-    localStorage.removeItem(SESSION_KEY);
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch (error) {
+      console.error("Could not clear a previously saved session", error);
+    }
     setSession(null);
     navigate("/");
   };
