@@ -236,6 +236,8 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
   const [chatError, setChatError] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [deletingMessages, setDeletingMessages] = useState<Set<string>>(() => new Set());
+  const [deletingConversation, setDeletingConversation] = useState(false);
 
   const selectedNote = notes.find((note) => note.id === selectedId) ?? null;
   const filteredNotes = useMemo(() => notes.filter((note) => `${note.title} ${note.content}`.toLowerCase().includes(search.toLowerCase())), [notes, search]);
@@ -326,6 +328,40 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
     const timer = window.setInterval(() => { void loadMessages(); }, 3000);
     return () => window.clearInterval(timer);
   }, [loadMessages, section, activeContact]);
+
+  const deleteMessage = async (messageId: string) => {
+    if (!window.confirm("هل تريد حذف هذه الرسالة ومرفقاتها من حساب الطرفين؟ لا يمكن التراجع عن ذلك.")) return;
+    setDeletingMessages((current) => new Set(current).add(messageId));
+    setChatError("");
+    try {
+      await api(`/messages/${encodeURIComponent(messageId)}`, session.token, { method: "DELETE" });
+      setMessages((current) => current.filter((message) => message.id !== messageId));
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "تعذر حذف الرسالة");
+    } finally {
+      setDeletingMessages((current) => {
+        const next = new Set(current);
+        next.delete(messageId);
+        return next;
+      });
+    }
+  };
+
+  const deleteConversation = async () => {
+    if (!activeContact || !window.confirm(`سيتم حذف جميع الرسائل والملفات في هذه المحادثة مع ${activeContact} من حساب الطرفين. لا يمكن التراجع عن ذلك.`)) return;
+    setDeletingConversation(true);
+    setChatError("");
+    try {
+      await api(`/conversations/${encodeURIComponent(activeContact)}`, session.token, { method: "DELETE" });
+      setMessages([]);
+      setSelectedFiles([]);
+      setActiveContact("");
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "تعذر حذف المحادثة");
+    } finally {
+      setDeletingConversation(false);
+    }
+  };
 
   const createNote = () => {
     const now = Date.now();
@@ -456,12 +492,12 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
               </aside>
               <div className="conversation">
                 {activeContact ? <>
-                  <div className="conversation-header"><button type="button" className="chat-back-button" onClick={() => { setActiveContact(""); setSelectedFiles([]); }} aria-label="العودة إلى المحادثات">›</button><span className="contact-avatar contact-color-0">{activeContact.slice(0, 1).toUpperCase()}</span><div><strong>{activeContact}</strong><small><i /> محادثة خاصة</small></div><span className="conversation-secure">◆</span></div>
+                  <div className="conversation-header"><button type="button" className="chat-back-button" onClick={() => { setActiveContact(""); setSelectedFiles([]); }} aria-label="العودة إلى المحادثات">›</button><span className="contact-avatar contact-color-0">{activeContact.slice(0, 1).toUpperCase()}</span><div><strong>{activeContact}</strong><small><i /> محادثة خاصة</small></div><span className="conversation-secure">◆</span><button type="button" className="clear-conversation-button" onClick={() => void deleteConversation()} disabled={deletingConversation} aria-label={`حذف المحادثة مع ${activeContact} للطرفين`} title="حذف المحادثة كاملة للطرفين">{deletingConversation ? "…" : "⌫"}</button></div>
                   <div className="message-history">
                     <div className="day-divider"><span>بداية المحادثة</span></div>
                     {chatLoading && messages.length === 0 && <div className="chat-loading"><span className="spinner" /> جارٍ تحميل المحادثة...</div>}
                     {!chatLoading && messages.length === 0 && <div className="chat-empty"><span>✉</span><strong>ابدأ محادثة لطيفة</strong><p>أرسل أول رسالة إلى {activeContact}.</p></div>}
-                    {messages.map((message) => <div key={message.id} className={`message-row ${message.sender === session.user.username ? "message-mine" : ""}`}><div className="message-bubble">{message.content && <p>{message.content}</p>}{message.attachments?.map((attachment) => <MessageAttachmentView key={attachment.id} messageId={message.id} attachment={attachment} token={session.token} />)}<time>{new Date(message.createdAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}</time></div></div>)}
+                    {messages.map((message) => <div key={message.id} className={`message-row ${message.sender === session.user.username ? "message-mine" : ""}`}><div className="message-bubble">{message.content && <p>{message.content}</p>}{message.attachments?.map((attachment) => <MessageAttachmentView key={attachment.id} messageId={message.id} attachment={attachment} token={session.token} />)}<time>{new Date(message.createdAt).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}</time></div><button type="button" className="delete-message-button" onClick={() => void deleteMessage(message.id)} disabled={deletingMessages.has(message.id)} aria-label="حذف الرسالة من الطرفين" title="حذف الرسالة للطرفين">{deletingMessages.has(message.id) ? "…" : "⌫"}</button></div>)}
                     {chatError && <div className="chat-error" role="alert">{chatError} <button onClick={() => void loadMessages()}>إعادة المحاولة</button></div>}
                   </div>
                   <form className="message-composer" onSubmit={sendMessage}>

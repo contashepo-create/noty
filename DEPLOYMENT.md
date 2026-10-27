@@ -21,7 +21,7 @@ pnpm exec wrangler d1 execute supernoti-db --remote --file=./schema.sql
 pnpm exec wrangler deploy
 ```
 
-Each message can include up to five files, with a 10 MB limit per file. Supported formats include JPEG, PNG, GIF, WebP, PDF, TXT, DOC/DOCX, XLS/XLSX, and PPT/PPTX. Attachments are served only to participants in the conversation.
+Each message can include up to five files, with a 10 MB limit per file. Supported formats include JPEG, PNG, GIF, WebP, PDF, TXT, DOC/DOCX, XLS/XLSX, and PPT/PPTX. Attachments are served only to participants in the conversation. Deleting a message or clearing a conversation removes it for both participants and deletes its stored attachments.
 
 ## GitHub Secrets
 

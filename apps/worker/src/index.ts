@@ -45,6 +45,18 @@ const ATTACHMENT_TYPES: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+async function deleteStoredAttachments(bucket: R2Bucket, keys: string[]): Promise<number> {
+  const results = await Promise.allSettled(keys.map((key) => bucket.delete(key)));
+  let failures = 0;
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      failures += 1;
+      console.error("Could not delete message attachment from R2", keys[index], result.reason);
+    }
+  });
+  return failures;
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -253,6 +265,76 @@ app.get("/messages/:username", async (c) => {
     }
   }
   return c.json({ messages: Array.from(messages.values()) });
+});
+
+app.delete("/messages/:messageId", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+
+  const messageId = c.req.param("messageId");
+  const message = await c.env.DB.prepare(
+    "SELECT id FROM messages WHERE id = ? AND (sender_username = ? OR recipient_username = ?)",
+  ).bind(messageId, username, username).first<{ id: string }>();
+  if (!message) return c.json({ error: "الرسالة غير متاحة" }, 404);
+
+  const attachments = await c.env.DB.prepare(
+    "SELECT object_key AS objectKey FROM message_attachments WHERE message_id = ?",
+  ).bind(messageId).all<{ objectKey: string }>();
+
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM message_attachments WHERE message_id = ?").bind(messageId),
+    c.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(messageId),
+  ]);
+  const cleanupFailures = await deleteStoredAttachments(c.env.BUCKET, attachments.results.map(({ objectKey }) => objectKey));
+  if (cleanupFailures) {
+    return c.json({ error: "حُذفت الرسالة، لكن تعذر حذف بعض الملفات المرفقة من التخزين." }, 502);
+  }
+  return c.json({ success: true });
+});
+
+app.delete("/conversations/:username", async (c) => {
+  if (!c.env.SESSION_SECRET) return c.json({ error: "المصادقة غير مهيأة على الخادم" }, 503);
+  const username = await authenticatedUsername(c.req.raw, c.env.SESSION_SECRET);
+  if (!username) return c.json({ error: "انتهت صلاحية الجلسة. سجّل الدخول مجددًا." }, 401);
+
+  const recipient = c.req.param("username");
+  const users = configuredUsers(c.env.SUPERNOTI_USERS || "[]");
+  if (!users) return c.json({ error: "إعدادات المستخدمين غير صالحة على الخادم" }, 500);
+  if (username === recipient || !users.some((user) => user.username === username) ||
+      !users.some((user) => user.username === recipient)) {
+    return c.json({ error: "المستخدم غير متاح" }, 404);
+  }
+
+  const attachments = await c.env.DB.prepare(
+    `SELECT message_attachments.object_key AS objectKey
+     FROM message_attachments
+     JOIN messages ON messages.id = message_attachments.message_id
+     WHERE (messages.sender_username = ? AND messages.recipient_username = ?)
+        OR (messages.sender_username = ? AND messages.recipient_username = ?)`,
+  ).bind(username, recipient, recipient, username).all<{ objectKey: string }>();
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `DELETE FROM message_attachments
+       WHERE message_id IN (
+         SELECT id FROM messages
+         WHERE (sender_username = ? AND recipient_username = ?)
+            OR (sender_username = ? AND recipient_username = ?)
+       )`,
+    ).bind(username, recipient, recipient, username),
+    c.env.DB.prepare(
+      `DELETE FROM messages
+       WHERE (sender_username = ? AND recipient_username = ?)
+          OR (sender_username = ? AND recipient_username = ?)`,
+    ).bind(username, recipient, recipient, username),
+  ]);
+
+  const cleanupFailures = await deleteStoredAttachments(c.env.BUCKET, attachments.results.map(({ objectKey }) => objectKey));
+  if (cleanupFailures) {
+    return c.json({ error: "حُذفت المحادثة، لكن تعذر حذف بعض الملفات المرفقة من التخزين." }, 502);
+  }
+  return c.json({ success: true });
 });
 
 app.get("/messages/:messageId/attachments/:attachmentId", async (c) => {
