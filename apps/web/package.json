@@ -5,17 +5,21 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans-arabic": "^5.2.5",
     "@supernoti/core": "workspace:*",
     "@supernoti/storage": "workspace:*",
     "@supernoti/ui": "workspace:*",
+    "lucide-react": "^0.468.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",

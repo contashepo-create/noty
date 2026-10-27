@@ -1,4 +1,4 @@
-﻿# Deployment Instructions
+# Deployment Instructions
 
 ## Setup Cloudflare (Free Tier)
 
@@ -11,6 +11,19 @@
    `pnpm --filter supernoti-worker exec wrangler d1 execute supernoti-db --remote --file=./schema.sql`
 7. From `apps/worker`, add Worker secrets with `pnpm exec wrangler secret put SUPERNOTI_USERS` and `pnpm exec wrangler secret put SESSION_SECRET`, then deploy with `pnpm exec wrangler deploy`.
 8. Set the GitHub Actions repository variable `VITE_API_BASE_URL` to the deployed Worker URL and push to `main`.
+
+## Upgrading conversation security
+
+Before deploying the updated Worker, create the conversation-lock table in the existing D1 database:
+
+```bash
+pnpm --filter supernoti-worker exec wrangler d1 execute supernoti-db --remote --file=./migrations/0001_conversation_locks.sql
+pnpm --filter supernoti-worker exec wrangler deploy
+```
+
+Then run (or rerun) the **Deploy Web to GitHub Pages** workflow on `main`. The workflow checks `/deployment-readiness` on the configured `VITE_API_BASE_URL` before publishing. If the Worker or the table is not ready, the workflow stops and the previous Pages deployment remains live. The migration is additive and leaves existing notes, messages, attachments and account configuration unchanged. A new web build requires this updated Worker; without the table or Worker update, access to chat fails closed. If no API URL is configured, the workflow still supports the landing-only site.
+
+The optional PIN is per account and protects its chat endpoints, not the other participant's access. PINs cannot be recovered in the app. An administrator can remove the relevant `conversation_locks` row to reset one without deleting messages. Disable PIN locks before rotating `SESSION_SECRET`, or reset and recreate them afterward.
 
 ## Chat Attachments
 

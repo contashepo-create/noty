@@ -1,4 +1,4 @@
-﻿name: Deploy Web to GitHub Pages
+name: Deploy Web to GitHub Pages
 
 on:
   push:
@@ -42,6 +42,11 @@ jobs:
 
       - name: Add GitHub Pages SPA fallback
         run: cp apps/web/dist/index.html apps/web/dist/404.html
+
+      - name: Verify Worker is ready before publishing
+        run: node scripts/check-worker-readiness.mjs
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
