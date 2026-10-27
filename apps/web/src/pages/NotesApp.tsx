@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 type User = { id: string; username: string };
 type Note = { id: string; title: string; content: string; createdAt: number; updatedAt: number };
@@ -377,6 +378,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
 }
 
 export default function NotesApp() {
+  const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(() => {
     try {
       const saved = localStorage.getItem(SESSION_KEY);
@@ -396,6 +398,7 @@ export default function NotesApp() {
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
     setSession(null);
+    navigate("/");
   };
 
   return session ? <Workspace session={session} onLogout={logout} /> : <Login onLogin={login} />;
