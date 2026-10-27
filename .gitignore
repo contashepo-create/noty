@@ -1,4 +1,4 @@
-﻿node_modules
+node_modules
 dist
 out
 build
@@ -9,3 +9,6 @@ build
 .wrangler
 .vite
 .turbo
+
+test-results/
+playwright-report/

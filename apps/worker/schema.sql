@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS folders (
+CREATE TABLE IF NOT EXISTS folders (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   parent_id TEXT,
@@ -64,3 +64,13 @@ CREATE TABLE IF NOT EXISTS message_attachments (
 
 CREATE INDEX IF NOT EXISTS message_attachments_message
   ON message_attachments (message_id);
+
+-- A lock is personal to an account; it does not change the other participant's access.
+CREATE TABLE IF NOT EXISTS conversation_locks (
+  owner_username TEXT PRIMARY KEY,
+  salt TEXT NOT NULL,
+  pin_hash TEXT NOT NULL,
+  version TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  locked_until INTEGER NOT NULL DEFAULT 0
+);
