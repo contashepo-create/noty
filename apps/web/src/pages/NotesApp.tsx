@@ -307,14 +307,14 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
         </div>
         <div className="sidebar-bottom">
           <div className="sync-status"><span className="status-dot" /><span>{noteSyncStatus}</span><span className="sync-cloud">☁</span></div>
-          <button className="profile-button" onClick={onLogout}><span className="profile-avatar">{initials}</span><span className="profile-copy"><strong>{session.user.username}</strong><small>حسابك الشخصي</small></span><span className="profile-exit">↗</span></button>
+          <div className="profile-summary"><span className="profile-avatar">{initials}</span><span className="profile-copy"><strong>{session.user.username}</strong><small>حسابك الشخصي</small></span></div>
         </div>
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
           <div className="breadcrumb"><span>مساحتي</span><span className="crumb-slash">/</span><strong>{section === "notes" ? "كل الملاحظات" : "الرسائل"}</strong></div>
-          <div className="topbar-actions"><label className="search-box"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث في مساحتك..." /><kbd>⌘ K</kbd></label><span className="topbar-avatar">{initials}</span></div>
+          <div className="topbar-actions"><label className="search-box"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث في مساحتك..." /><kbd>⌘ K</kbd></label><button className="logout-button" onClick={onLogout}><span aria-hidden="true">↗</span> تسجيل الخروج</button><span className="topbar-avatar">{initials}</span></div>
         </header>
 
         {section === "notes" ? (
