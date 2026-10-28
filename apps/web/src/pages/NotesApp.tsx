@@ -782,7 +782,7 @@ function Workspace({ session, onLogout }: { session: Session; onLogout: () => vo
                 <>
                   <div className="editor-actions">
                     <div className="editor-header-label"><span className="editor-header-icon"><FileText /></span><span><strong>ملاحظتك</strong><small>مساحة خاصة لأفكارك</small></span></div>
-                    <div className="editor-action-buttons"><button type="button" className="editor-delete icon-button" onClick={() => requestDelete({ type: "note", id: selectedNote.id })} aria-label="حذف الملاحظة" title="حذف الملاحظة"><Trash2 /></button><button type="button" className="editor-save primary-button" onClick={saveAndCloseNote}><Check />حفظ وإغلاق</button></div>
+                    <div className="editor-action-buttons"><button type="button" className="editor-back icon-button" onClick={() => setSelectedId(null)} aria-label="العودة إلى قائمة الملاحظات" title="رجوع إلى الملاحظات"><ArrowRight /><span>رجوع</span></button><button type="button" className="editor-delete icon-button" onClick={() => requestDelete({ type: "note", id: selectedNote.id })} aria-label="حذف الملاحظة" title="حذف الملاحظة"><Trash2 /></button><button type="button" className="editor-save primary-button" onClick={saveAndCloseNote}><Check />حفظ وإغلاق</button></div>
                   </div>
                   <div className="editor-paper">
                     <span className="editor-overline"><Sparkles /> ملاحظة شخصية</span>
